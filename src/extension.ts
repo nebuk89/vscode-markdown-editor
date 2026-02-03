@@ -170,14 +170,14 @@ class EditorPanel {
     
     // Add the markdown file's directory and parent directories up to workspace root
     if (uri) {
-      let currentUri = vscode.Uri.file(require('path').dirname(uri.fsPath))
+      let currentUri = vscode.Uri.file(NodePath.dirname(uri.fsPath))
       localResourceRoots.push(currentUri)
       
       // If file is outside workspace, add its parent directory
       const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
       if (!workspaceFolder) {
         // Add parent directory for files outside workspace
-        const parentDir = vscode.Uri.file(require('path').dirname(currentUri.fsPath))
+        const parentDir = vscode.Uri.file(NodePath.dirname(currentUri.fsPath))
         localResourceRoots.push(parentDir)
       }
     }
@@ -641,13 +641,13 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     }
     
     // Add the markdown file's directory and parent directories
-    let currentUri = vscode.Uri.file(require('path').dirname(uri.fsPath))
+    let currentUri = vscode.Uri.file(NodePath.dirname(uri.fsPath))
     localResourceRoots.push(currentUri)
     
     // If file is outside workspace, add its parent directory
     const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
     if (!workspaceFolder) {
-      const parentDir = vscode.Uri.file(require('path').dirname(currentUri.fsPath))
+      const parentDir = vscode.Uri.file(NodePath.dirname(currentUri.fsPath))
       localResourceRoots.push(parentDir)
     }
     
