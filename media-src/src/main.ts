@@ -19,8 +19,16 @@ import { toolbar } from './toolbar'
 import { fixTableIr } from './fix-table-ir'
 import './main.css'
 
+// Debug helper - only logs in development mode
+function debug(...args: any[]) {
+  // In production builds with minification, this will be removed
+  if (typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development') {
+    console.log(...args)
+  }
+}
+
 function initVditor(msg) {
-  console.log('msg', msg)
+  debug('msg', msg)
   let inputTimer
   let defaultOptions: any = {}
   defaultOptions = merge(defaultOptions, msg.options, {
@@ -111,10 +119,10 @@ window.addEventListener('message', (e) => {
           initVditor({ content: msg.content })
           saveVditorOptions()
         }
-        console.log('initVditor')
+        debug('initVditor')
       } else {
         vditor.setValue(msg.content)
-        console.log('setValue')
+        debug('setValue')
       }
       break
     }

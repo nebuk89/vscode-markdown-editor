@@ -3,11 +3,53 @@ import * as NodePath from 'path'
 const KeyVditorOptions = 'vditor.options'
 
 function debug(...args: any[]) {
-  console.log(...args)
+  // Only log in development mode (when debugging the extension)
+  // In production, this will be a no-op
+  if (process.env.NODE_ENV === 'development') {
+    console.log(...args)
+  }
 }
 
 function showError(msg: string) {
   vscode.window.showErrorMessage(`[markdown-editor] ${msg}`)
+}
+
+/**
+ * Sanitize custom CSS to prevent XSS attacks
+ * Removes dangerous patterns like `javascript:`, `expression()`, and `url()` with javascript
+ */
+function sanitizeCustomCSS(css: string): string {
+  if (!css) return ''
+  
+  // Remove potentially dangerous patterns
+  let sanitized = css
+    // Remove javascript: protocol in URLs
+    .replace(/javascript\s*:/gi, '')
+    // Remove vbscript: protocol
+    .replace(/vbscript\s*:/gi, '')
+    // Remove data: URLs that could contain scripts
+    .replace(/data\s*:\s*text\/html/gi, '')
+    // Remove @import with javascript or data URLs
+    .replace(/@import\s+url\s*\(\s*['"]?\s*javascript:/gi, '@import url(')
+    .replace(/@import\s+url\s*\(\s*['"]?\s*data:/gi, '@import url(')
+    // Remove expression() (IE-specific, but still dangerous)
+    .replace(/expression\s*\(/gi, '')
+    // Remove behavior property (IE-specific)
+    .replace(/behavior\s*:/gi, 'removed-behavior:')
+    // Remove -moz-binding (Firefox-specific XBL)
+    .replace(/-moz-binding\s*:/gi, 'removed-moz-binding:')
+  
+  return sanitized
+}
+
+/**
+ * Sanitize file path for error messages to avoid leaking full system paths
+ * Shows only the filename and parent directory
+ */
+function sanitizePath(fullPath: string): string {
+  const parts = fullPath.split(/[/\\]/)
+  // Return last 2 parts (parent directory + filename)
+  return parts.length > 2 ? '...' + parts.slice(-2).join('/') : fullPath
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -98,7 +140,7 @@ class EditorPanel {
       EditorPanel.viewType,
       'markdown-editor',
       column || vscode.ViewColumn.One,
-      EditorPanel.getWebviewOptions(uri)
+      EditorPanel.getWebviewOptions(uri, extensionUri)
     )
 
     EditorPanel.currentPanel = new EditorPanel(
@@ -110,22 +152,40 @@ class EditorPanel {
     )
   }
 
-  private static getFolders(): vscode.Uri[] {
-    const data = []
-    for (let i = 65; i <= 90; i++) {
-      data.push(vscode.Uri.file(`${String.fromCharCode(i)}:/`))
-    }
-    return data
-  }
-
   static getWebviewOptions(
-    uri?: vscode.Uri
+    uri?: vscode.Uri,
+    extensionUri?: vscode.Uri
   ): vscode.WebviewOptions & vscode.WebviewPanelOptions {
+    const localResourceRoots: vscode.Uri[] = []
+    
+    // Add extension resources (required for CSS/JS)
+    if (extensionUri) {
+      localResourceRoots.push(extensionUri)
+    }
+    
+    // Add workspace folders (required for images in markdown)
+    if (vscode.workspace.workspaceFolders) {
+      localResourceRoots.push(...vscode.workspace.workspaceFolders.map(f => f.uri))
+    }
+    
+    // Add the markdown file's directory and parent directories up to workspace root
+    if (uri) {
+      let currentUri = vscode.Uri.file(require('path').dirname(uri.fsPath))
+      localResourceRoots.push(currentUri)
+      
+      // If file is outside workspace, add its parent directory
+      const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
+      if (!workspaceFolder) {
+        // Add parent directory for files outside workspace
+        const parentDir = vscode.Uri.file(require('path').dirname(currentUri.fsPath))
+        localResourceRoots.push(parentDir)
+      }
+    }
+    
     return {
       // Enable javascript in the webview
       enableScripts: true,
-
-      localResourceRoots: [vscode.Uri.file("/"), ...this.getFolders()],
+      localResourceRoots,
       retainContextWhenHidden: true,
       enableCommandUris: true,
     }
@@ -261,7 +321,7 @@ class EditorPanel {
               )
             } catch (error) {
               console.error(error)
-              showError(`Invalid image folder: ${assetsFolder}`)
+              showError(`Invalid image folder: ${sanitizePath(assetsFolder)}`)
             }
             await Promise.all(
               message.files.map(async (f: any) => {
@@ -398,7 +458,7 @@ class EditorPanel {
 
 				<title>markdown editor</title>
         <style>` +
-      EditorPanel.config.get<string>('customCss') +
+      sanitizeCustomCSS(EditorPanel.config.get<string>('customCss') || '') +
       `</style>
 			</head>
 			<body>
@@ -430,7 +490,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     _token: vscode.CancellationToken
   ): Promise<void> {
     // Set webview options
-    webviewPanel.webview.options = this.getWebviewOptions()
+    webviewPanel.webview.options = this.getWebviewOptions(document.uri)
 
     // Init webview content
     const uri = document.uri
@@ -532,7 +592,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             await vscode.workspace.fs.createDirectory(vscode.Uri.file(assetsFolder))
           } catch (error) {
             console.error(error)
-            showError(`Invalid image folder: ${assetsFolder}`)
+            showError(`Invalid image folder: ${sanitizePath(assetsFolder)}`)
           }
           await Promise.all(
             message.files.map(async (f: any) => {
@@ -569,18 +629,31 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     })
   }
 
-  private static getFolders(): vscode.Uri[] {
-    const data = []
-    for (let i = 65; i <= 90; i++) {
-      data.push(vscode.Uri.file(`${String.fromCharCode(i)}:/`))
+  private getWebviewOptions(uri: vscode.Uri): vscode.WebviewOptions {
+    const localResourceRoots: vscode.Uri[] = []
+    
+    // Add extension resources (required for CSS/JS)
+    localResourceRoots.push(this.context.extensionUri)
+    
+    // Add workspace folders (required for images in markdown)
+    if (vscode.workspace.workspaceFolders) {
+      localResourceRoots.push(...vscode.workspace.workspaceFolders.map(f => f.uri))
     }
-    return data
-  }
-
-  private getWebviewOptions(): vscode.WebviewOptions {
+    
+    // Add the markdown file's directory and parent directories
+    let currentUri = vscode.Uri.file(require('path').dirname(uri.fsPath))
+    localResourceRoots.push(currentUri)
+    
+    // If file is outside workspace, add its parent directory
+    const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri)
+    if (!workspaceFolder) {
+      const parentDir = vscode.Uri.file(require('path').dirname(currentUri.fsPath))
+      localResourceRoots.push(parentDir)
+    }
+    
     return {
       enableScripts: true,
-      localResourceRoots: [vscode.Uri.file('/'), ...MarkdownEditorProvider.getFolders()],
+      localResourceRoots,
     }
   }
 
@@ -605,7 +678,7 @@ class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
 				<title>markdown editor</title>
         <style>` +
-      EditorPanel.config.get<string>('customCss') +
+      sanitizeCustomCSS(EditorPanel.config.get<string>('customCss') || '') +
       `</style>
 			</head>
 			<body>
